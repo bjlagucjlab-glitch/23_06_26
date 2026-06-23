@@ -244,3 +244,62 @@ country_mapping = {
 customers['country'] = customers['country'].str.strip().str.replace(country_mapping)
 
 promotions = load_promotions_to_df(connect)
+
+
+#2.6 -------------------------------------------------------------------------------------------
+#Проаналізувати зміну середнього рейтингу за період 2022–2026
+orders_full = order_items.merge(products, on='product_id', how='inner')
+orders_full = orders_full.merge(orders, on='order_id', how='inner')
+orders_full['order_date'] = pd.to_datetime(orders_full['order_date'])
+orders_full['year'] = orders_full['order_date'].dt.year
+orders_full['month'] = orders_full['order_date'].dt.month
+mean_rating_year = orders_full.groupby('year')['rating'].mean().reset_index()
+# print(mean_rating_year[mean_rating_year['year'].isin([2022, 2023, 2024, 2025, 2026])])
+
+#Розрахувати кореляцію між кількістю відгуків та середнім рейтингом товару
+product_rating = orders_full.groupby('product').agg(
+    count_review=('rating', 'count'),
+    mean_rating=('rating', 'mean')
+).reset_index()
+corr_product_rating = product_rating[['count_review', 'mean_rating']].corr()
+# print(corr_product_rating)
+
+# print(rating_by_cat[['category', 'rating']])
+
+orders_full = orders_full.merge(customers[['customer_id', 'segment']], on='customer_id', how='inner')
+segment_rating = orders_full.groupby('segment')['rating'].mean().round(2).reset_index()
+# print(segment_rating)
+
+#Лінійний графік середнього рейтингу за місяцями
+mean_rat_by_month = orders_full.groupby('month')['rating'].mean().round(2).reset_index()
+# sns.lineplot(
+#     data=mean_rat_by_month,
+#     x='month',
+#     y='rating',
+# )
+# plt.xlabel('Months')
+# plt.ylabel('Rating')
+# plt.title("Average rating by month")
+# plt.show()
+
+#Box Plot рейтингу по категоріях
+# sns.boxplot(
+#     data=orders_full,
+#     x='category',
+#     y='rating',
+#     palette='Set2',
+# )
+# plt.xlabel('Category')
+# plt.ylabel('Rating')
+# plt.title('Category Rating')
+# plt.xticks(rotation=45)
+# plt.show()
+
+#Scatter Plot (кількість відгуків vs середній рейтинг)
+# sns.scatterplot(
+#     x=[orders_full['rating'].count()],
+#     y=[orders_full['rating'].mean()]
+# )
+# plt.show()
+# print(orders_full['rating'].count(), orders_full['rating'].mean())
+-----------------------------------------------------------------------------------------------------
