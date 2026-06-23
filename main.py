@@ -303,3 +303,10 @@ mean_rat_by_month = orders_full.groupby('month')['rating'].mean().round(2).reset
 # plt.show()
 # print(orders_full['rating'].count(), orders_full['rating'].mean())
 -----------------------------------------------------------------------------------------------------
+Фінансовий відділ виявив, що деякі замовлення зі статусом `completed` **не мають відповідного запису в payments**
+payment_orders = payments.merge(orders, on='order_id', how='left')
+payment_orders = payment_orders[payment_orders['status'] == 'completed']
+payment_orders['method'] = payment_orders['method'].fillna('Unknown')
+print(payment_orders['method'].unique())
+#Пропусков в столбце 'method' необнаружено. Анализ не требуется.
+----------------------------------------------------------------------------------
