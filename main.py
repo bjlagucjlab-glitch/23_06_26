@@ -311,4 +311,126 @@ payment_orders['method'] = payment_orders['method'].fillna('Unknown')
 print(payment_orders['method'].unique())
 #Пропусков в столбце 'method' необнаружено. Анализ не требуется.
 ----------------------------------------------------------------------------------
-.
+#Маркетинг хоче запустити акцію до дня народження — знижка 10% у місяць народження. 
+
+# 1. Cкільки клієнтів народилося кожного місяця
+customers['birth_date'] = pd.to_datetime(customers['birth_date'])
+customers['birth_month'] = customers['birth_date'].dt.month
+customers['birth_year'] = customers['birth_date'].dt.year
+
+birth_month = customers.groupby('birth_month')['customer_id'].count().reset_index()
+
+#  2. Визначити середній вік клієнтів (на поточну дату) — чи всі > 18?
+current_year = pd.to_datetime('now').year
+customers['age'] = (current_year - customers['birth_year'])
+mean_age = customers['age'].mean()
+
+print(f"Средний возраст клиентов: {mean_age:.2f} лет")
+print(f"Количество клиентов младше 18 лет: {(customers['age'] < 18).sum()}")
+
+# 3. Чи є сезонність: клієнти, народжені влітку, купують більше?
+customers['season_birth'] = np.where(
+    customers['birth_month'].isin([12, 1, 2]), 'winter',
+    np.where(customers['birth_month'].isin([3, 4, 5]), 'spring',
+    np.where(customers['birth_month'].isin([6, 7, 8]), 'summer',
+    'autumn'))
+)
+order_items['revenue'] = (order_items['quantity'] * order_items['unit_price'] *  (1 - order_items['discount'])).round(2)
+orders_revenue = orders[['customer_id', 'order_id']].merge(order_items[['order_id', 'revenue']], on='order_id', how='inner')
+customers_revenue = customers.merge(orders_revenue, on='customer_id', how='inner')
+season_birth_orders = customers_revenue.groupby('season_birth').agg(
+    total_revenue=('revenue', 'sum'),
+    total_orders=('order_id', 'count')
+).reset_index().sort_values(by=['total_revenue', 'total_orders'], ascending=False)
+season_birth_orders
+print('Да, клиенты с ДР летом, покупают чаще и на большую выручку для кампании.')
+
+# 4. Порахувати потенційний revenue від акції:
+# скільки клієнтів мають день народження в поточному місяці, помножити на середній чек
+current_month = pd.to_datetime('now').month
+potention_revenue = ((customers['birth_month'] == current_month).count() * customers_revenue['revenue'].mean()).round(2)
+print(f'Потенциальный revenue: {potention_revenue}')
+
+# 5. Побудувати pie chart — частка клієнтів за місяцями народження
+plt.figure(figsize=(8, 8))
+plt.pie(
+    x=birth_month['customer_id'],
+    labels=birth_month['birth_month'],
+    autopct='%1.1f%%'
+)
+plt.title('Распределение клиентов по месяцам рождения')
+plt.show()
+#------------------------------------------------------------------------------------------------------------------------------
+
+#2.2 Скоринг ризику відтоку (Churn Risk Scoring) 
+total_orders_per_customer = orders.groupby('customer_id')['order_id'].count().reset_index().rename(columns={'order_id': 'total_orders'})
+returned_orders_per_customer = orders[orders['status'] == 'returned'].groupby('customer_id')['order_id'].count().reset_index().rename(columns={'order_id': 'returned_orders'})
+
+customer_return_rate = pd.merge(total_orders_per_customer, returned_orders_per_customer, on='customer_id', how='left')
+customer_return_rate['returned_orders'] = customer_return_rate['returned_orders'].fillna(0)
+customer_return_rate['return_rate'] = (customer_return_rate['returned_orders'] / customer_return_rate['total_orders']).fillna(0)
+
+customer_avg_rating = reviews.groupby('customer_id')['rating'].mean().reset_index()
+customer_avg_rating = customer_avg_rating.rename(columns={'rating': 'avg_rating'})
+
+orders['order_date'] = pd.to_datetime(orders['order_date'])
+
+def calculate_frequency_decline(customer_orders):
+    if len(customer_orders) < 2:
+        return 0
+    customer_orders = customer_orders.sort_values(by='order_date')
+    time_diffs = customer_orders['order_date'].diff().dropna()
+    return time_diffs.mean().total_seconds() / (24 * 3600)
+
+customer_frequency_decline = orders.groupby('customer_id').apply(calculate_frequency_decline).reset_index(name='frequency_decline')
+
+latest_order_date = orders.groupby('customer_id')['order_date'].max().reset_index()
+cutoff_date = orders['order_date'].max()
+
+days_since_last_order_df = latest_order_date.copy()
+days_since_last_order_df['days_since_last_order'] = (cutoff_date - days_since_last_order_df['order_date']).dt.days
+days_since_last_order_df = days_since_last_order_df[['customer_id', 'days_since_last_order']]
+
+churn_features_df = days_since_last_order_df.merge(customer_return_rate[['customer_id', 'return_rate']], on='customer_id', how='left')
+churn_features_df = churn_features_df.merge(customer_avg_rating, on='customer_id', how='left')
+churn_features_df = churn_features_df.merge(customer_frequency_decline, on='customer_id', how='left')
+
+churn_features_df['avg_rating'] = churn_features_df['avg_rating'].fillna(churn_features_df['avg_rating'].mean())
+churn_features_df['frequency_decline'] = churn_features_df['frequency_decline'].fillna(0)
+
+churn_features_df = days_since_last_order_df.merge(customer_return_rate[['customer_id', 'return_rate']], on='customer_id', how='left')
+churn_features_df = churn_features_df.merge(customer_avg_rating, on='customer_id', how='left')
+churn_features_df = churn_features_df.merge(customer_frequency_decline, on='customer_id', how='left')
+
+churn_features_df['avg_rating'] = churn_features_df['avg_rating'].fillna(churn_features_df['avg_rating'].mean())
+churn_features_df['frequency_decline'] = churn_features_df['frequency_decline'].fillna(0)
+
+churn_features_df['churn_risk_group'] = 'Low Risk'
+churn_features_df.loc[churn_features_df['days_since_last_order'] > 90, 'churn_risk_group'] = 'Medium Risk'
+churn_features_df.loc[churn_features_df['days_since_last_order'] > 180, 'churn_risk_group'] = 'High Risk'
+
+print("Churn Risk Group Distribution:")
+print(churn_features_df['churn_risk_group'].value_counts())
+
+churn_analysis_df = churn_features_df.merge(customers[['customer_id', 'segment']], on='customer_id', how='left')
+
+print("\nChurn Risk by Segment:")
+churn_analysis_df.groupby('segment')['churn_risk_group'].value_counts(normalize=True).unstack().fillna(0)
+churn_by_segment_pivot = churn_analysis_df.groupby('segment')['churn_risk_group'].value_counts(normalize=True).unstack().fillna(0)
+
+for col in ['Low Risk', 'Medium Risk', 'High Risk']:
+    if col not in churn_by_segment_pivot.columns:
+        churn_by_segment_pivot[col] = 0
+churn_by_segment_pivot = churn_by_segment_pivot[['Low Risk', 'Medium Risk', 'High Risk']]
+
+fig, ax = plt.subplots(figsize=(10, 6))
+churn_by_segment_pivot.plot(kind='bar', stacked=True, ax=ax, cmap='viridis')
+
+ax.set_title('Распределение риска оттока по сегментам клиентов')
+ax.set_xlabel('Сегмент клиентов')
+ax.set_ylabel('Доля клиентов')
+ax.tick_params(axis='x', rotation=45)
+ax.legend(title='Группа риска оттока', bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
+#---------------------------------------------------------
